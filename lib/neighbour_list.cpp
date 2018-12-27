@@ -26,10 +26,14 @@ using namespace std;
 using namespace Eigen;
 
 // this function returns a cell neighbour list
-// positions: n_atoms*3 array, storing the position information of the atoms
+// positions: n_atoms*3 array, storing the positions of the atoms you want to neighbour list
+//              Here, positions MUST BE dense.
 // atom_labels: n_atoms*1 array, just integers to label the atoms, usually just 0, 1, ... n_atoms-1
-//              but can be different if we are constructing a neighbour list for only part of atoms
-// n_atoms: integer
+//              but can be different if we are constructing a neighbour list for only part of the system
+//              for example, if we only want to neighbour list the real atoms, but not the v-sites, then
+//              the v-site indices should be missing from atom_labels
+//              that is, atom_labels must NOT be dense.
+// n_atoms: integer, must be dense
 // box, box_inv: box dimensions and its inversion
 // r_cut: realspace cutoff distance, in Angstrom
 Tensor<int, 4, RowMajor> construct_cell_list(const MatrixXd & positions, const ArrayXi & atom_labels,
@@ -52,13 +56,13 @@ Tensor<int, 4, RowMajor> construct_cell_list(const MatrixXd & positions, const A
   hb = vol / ca;
   hc = vol / ab;
   // number of cells in each dimension
-  na = floor(ha/r_cut) + 1;
-  nb = floor(hb/r_cut) + 1;
-  nc = floor(hc/r_cut) + 1;
+  na = floor(ha/r_cut);
+  nb = floor(hb/r_cut);
+  nc = floor(hc/r_cut);
   double density = (double)n_atoms/na/nb/nc;
   // Note here +N is the magic number, we assume the density fluctuation is small enough
   // so +N is large enough buffer.
-  n_max = floor(density) + 10;
+  n_max = floor(density) + CELL_LIST_BUFFER;
   // create celllist, initialize with -1
   // -1 signals the end of the list
   celllist.resize(na, nb, nc, n_max);
@@ -83,37 +87,291 @@ Tensor<int, 4, RowMajor> construct_cell_list(const MatrixXd & positions, const A
     if (indices(i_atom, 1) < 0) ib += nb;
     if (indices(i_atom, 2) < 0) ic += nc;
     // assign atom to a particular cell
-    for (int i=0; i<n_max; i++) {
+    int i;
+    for (i=0; i<n_max; i++) {
       if (celllist(ia, ib, ic, i) < 0) {
         celllist(ia, ib, ic, i) = label;
         break;
       }
+    }
+    // overflow
+    if (i == n_max) {
+      cout << "ERROR: cell list overflow, increase CELL_LIST_BUFFER" << endl;
+      throw exception();
     }
   }
 
   return celllist;
 }
 
+
+// construct a n_atoms*3 array, stores the cell indices in which each particle resides
+// Watchout: for a system with virtual sites, n_atoms should be the number of all sites
+// including both atoms (which you want to neighbour list), and the vsites (which you do
+// not want to neighbour list.
+// Hence, the returned cell_index_map will contain -1 for virtual sites, indicating that 
+// they are not assigned to a particular cell.
+// n_atoms: integer, must be not dense
+// return values not dense
+MatrixXi build_cell_index_map(const Tensor<int, 4, RowMajor> & celllist, int n_atoms) 
+{
+  MatrixXi cell_index_map;
+  cell_index_map.resize(n_atoms, 3);
+  cell_index_map.setConstant(-1);
+  int na = celllist.dimension(0);
+  int nb = celllist.dimension(1);
+  int nc = celllist.dimension(2);
+  int nmax = celllist.dimension(3);
+  for (int ia=0; ia<na; ia++){
+    for (int ib=0; ib<nb; ib++) {
+      for (int ic=0; ic<nc; ic++) {
+        for (int n=0; n<nmax; n++) {
+          if (celllist(ia, ib, ic, n) < 0) break;
+          int iatom = celllist(ia, ib, ic, n);
+          cell_index_map(iatom, 0) = ia;
+          cell_index_map(iatom, 1) = ib;
+          cell_index_map(iatom, 2) = ic;
+        }
+      }
+    }
+  }
+  return cell_index_map;
+}
+
+// Here, positions must NOT be dense
+// cell_index_map must NOT be dense
+// i_atom must NOT be dense
+ArrayXi find_neighbours(const MatrixXd & positions, const Tensor<int, 4, RowMajor> & celllist,
+    int i_atom, int i0, int j0, int k0, double r_cut, const MatrixXd & box, const MatrixXd & box_inv)
+{
+  // original cell indices
+  ArrayXi neighbours;
+  neighbours.resize(MAX_N_NEIGHBOURS);
+  neighbours.setConstant(-1);
+  int n_neighbour = 0;
+  int n1 = celllist.dimension(0);
+  int n2 = celllist.dimension(1);
+  int n3 = celllist.dimension(2);
+  int nmax = celllist.dimension(3);
+  double r_cut2 = r_cut*r_cut;
+  VectorXd r0 = positions.row(i_atom);
+  // loop over the 3*3*3=27 neighbouring cells
+  for (int di=-1; di<=1; di++) {
+    int i = i0 + di;
+    // pbc shifts
+    i = i % n1;
+    if (i < 0) i += n1;
+    for (int dj=-1; dj<=1; dj++) {
+      int j = j0 + dj;
+      j = j % n2;
+      if (j < 0) j += n2;
+      for (int dk=-1; dk<=1; dk++) {
+        int k = k0 + dk;
+        k = k % n3;
+        if (k < 0) k += n3;
+        for (int n=0; n<nmax; n++) {
+          // end of cell list
+          if (celllist(i, j, k, n) < 0) break;
+          int i_atom1 = celllist(i, j, k, n);
+          if (i_atom1 == i_atom) continue;
+          // if r_cut < 0, meaning we do not do distance judge
+          if (r_cut < 0) {
+            if (n_neighbour == MAX_N_NEIGHBOURS) {
+              cout << "ERROR: overflow in neighbour search, increase MAX_N_NEIGHBOURS" << endl;
+              throw exception();
+            }
+            neighbours(n_neighbour) = i_atom1;
+            n_neighbour += 1;
+          }
+          else {
+            VectorXd r1 = positions.row(i_atom1);
+            VectorXd dr = dr_vec_pbc(r0, r1, box, box_inv, 0);
+            if (abs(dr(0))>r_cut or abs(dr(1))>r_cut or abs(dr(2))>r_cut) continue;
+            if (dr.dot(dr) < r_cut2) {
+              if (n_neighbour == MAX_N_NEIGHBOURS) {
+                cout << "ERROR: overflow in neighbour search, increase MAX_N_NEIGHBOURS" << endl;
+                throw exception();
+              }
+              neighbours(n_neighbour) = i_atom1;
+              n_neighbour += 1;
+            }
+          }
+        }
+      }
+    }
+  }
+  return neighbours;
+}
+
+
+ArrayXi find_neighbours_for_atom(const MatrixXd & positions, const Tensor<int, 4, RowMajor> & celllist,
+    int i_atom0, const MatrixXi & cell_index_map, double r_cut, const MatrixXd & box, const MatrixXd & box_inv)
+{
+  int i0 = cell_index_map(i_atom0, 0);
+  int j0 = cell_index_map(i_atom0, 1);
+  int k0 = cell_index_map(i_atom0, 2);
+  return find_neighbours(positions, celllist, i_atom0, i0, j0, k0, r_cut, box, box_inv);
+}
+
+
+// Positions here are not dense
+// n_atoms here is not dense
+MatrixXi find_neighbours_for_all(const MatrixXd & positions, const Tensor<int, 4, RowMajor> & celllist,
+    int n_atoms, double r_cut, const MatrixXd & box, const MatrixXd & box_inv)
+{
+  MatrixXi nb_list;
+  nb_list.resize(n_atoms, MAX_N_NEIGHBOURS);
+  nb_list.setConstant(-1);
+  ArrayXi n_nbs;
+  n_nbs.resize(n_atoms);
+  n_nbs.setConstant(0);
+  int n1 = celllist.dimension(0);
+  int n2 = celllist.dimension(1);
+  int n3 = celllist.dimension(2);
+  int nmax = celllist.dimension(3);
+  double r_cut2 = r_cut * r_cut;
+  for (int i0=0; i0<n1; i0++) {
+    for (int j0=0; j0<n2; j0++) {
+      for (int k0=0; k0<n2; k0++) {
+        for (int n0=0; n0<nmax; n0++) {
+          // finish looping over this cell
+          if (celllist(i0, j0, k0, n0) < 0) break;
+          int i_atom0 = celllist(i0, j0, k0, n0);
+          VectorXd r0 = positions.row(i_atom0);
+          // loop over the 3*3*3=27 neighbouring cells
+          for (int di=-1; di<=1; di++) {
+            int i = i0 + di;
+            i = i % n1;
+            if (i < 0) i += n1;
+            for (int dj=-1; dj<=1; dj++) {
+              int j = j0 + dj;
+              j = j % n2;
+              if (j < 0) j += n2;
+              for (int dk=-1; dk<=1; dk++) {
+                int k = k0 + dk;
+                k = k % n3;
+                if (k < 0) k += n3;
+                for (int n=0; n<nmax; n++) {
+                  if (celllist(i, j, k, n) < 0) break;
+                  int i_atom1 = celllist(i, j, k, n);
+                  if (i_atom1 <= i_atom0) continue;
+                  // do not judge distance, just put atom0, atom1 be neighbours
+                  if (r_cut < 0.0) { 
+                    if (n_nbs(i_atom0) == MAX_N_NEIGHBOURS or n_nbs(i_atom1) == MAX_N_NEIGHBOURS) {
+                      cout << "ERROR: overflow in neighbour search, increase MAX_N_NEIGHBOURS" << endl;
+                      throw exception();
+                    }
+                    // add neighbour to atom0
+                    nb_list(i_atom0, n_nbs(i_atom0)) = i_atom1;
+                    n_nbs(i_atom0) += 1;
+                    // add neighbour to atom1
+                    nb_list(i_atom1, n_nbs(i_atom1)) = i_atom0;
+                    n_nbs(i_atom1) += 1;
+                  }
+                  else {
+                    VectorXd r1 = positions.row(i_atom1);
+                    VectorXd dr = dr_vec_pbc(r0, r1, box, box_inv, 0);
+                    // pre-screening
+                    if (abs(dr(0))>r_cut or abs(dr(1))>r_cut or abs(dr(2))>r_cut) continue;
+                    if (dr.dot(dr) < r_cut2) {
+                      if (n_nbs(i_atom0) == MAX_N_NEIGHBOURS or n_nbs(i_atom1) == MAX_N_NEIGHBOURS) {
+                        cout << "ERROR: overflow in neighbour search, increase MAX_N_NEIGHBOURS" << endl;
+                        throw exception();
+                      }
+                      // add neighbour to atom0
+                      nb_list(i_atom0, n_nbs(i_atom0)) = i_atom1;
+                      n_nbs(i_atom0) += 1;
+                      // add neighbour to atom1
+                      nb_list(i_atom1, n_nbs(i_atom1)) = i_atom0;
+                      n_nbs(i_atom1) += 1;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return nb_list;
+}
+
+
+/* ************************************************ */
+/* Python wrappers for the neighbour list functions */
+/* ************************************************ */
+
 // pybind11 does not recognize the multidimensional Tensor datatype, hence the beaucracy
-ArrayXi construct_cell_list_pywrap(const MatrixXd & positions, const ArrayXi & atom_labels,
+
+// convert a 4d tensor to 1d array
+// T(n1, n2, n3, n4) -> A = {n1, n2, n3, n4, T{1111}, T{1112}, ..., T{n1,n2,n3,n4}}
+ArrayXi Tensor_4d_to_1d(const Tensor<int, 4, RowMajor> & t_4d)
+{
+  ArrayXi results;
+  Map<const ArrayXi> data(t_4d.data(), t_4d.size());
+  results.resize(t_4d.size()+4);
+  // copy the dimension information
+  results(0) = t_4d.dimension(0);
+  results(1) = t_4d.dimension(1);
+  results(2) = t_4d.dimension(2);
+  results(3) = t_4d.dimension(3);
+  // copy the real data
+  results.segment(4, t_4d.size()) = data;
+  return results;
+}
+
+// convert a 1d array to 4d tensor
+Tensor<int, 4, RowMajor> Tensor_1d_to_4d(const ArrayXi & A_1d)
+{
+  int n1 = A_1d(0);
+  int n2 = A_1d(1);
+  int n3 = A_1d(2);
+  int n4 = A_1d(3);
+  TensorMap<Tensor<const int, 4, RowMajor>> T_4d(A_1d.segment(4, A_1d.size()-4).data(), n1, n2, n3, n4);
+  return T_4d;
+}
+
+ArrayXi construct_cell_list_py(const MatrixXd & positions, const ArrayXi & atom_labels,
     int n_atoms, const MatrixXd & box, const MatrixXd & box_inv, double r_cut)
 {
   Tensor<int, 4, RowMajor> celllist;
   celllist = construct_cell_list(positions, atom_labels, n_atoms, box, box_inv, r_cut);
-  ArrayXi results;
-  Map<ArrayXi> data(celllist.data(), celllist.size());
-  // the first four elements are dimensions
-  results.resize(celllist.size() + 4);
-  results(0) = celllist.dimension(0);
-  results(1) = celllist.dimension(1);
-  results(2) = celllist.dimension(2);
-  results(3) = celllist.dimension(3);
-  results.segment(4, celllist.size()) = data;
-  return results;
+  return Tensor_4d_to_1d(celllist);
 }
+
+
+MatrixXi build_cell_index_map_py(const ArrayXi & celllist_py, int n_atoms) 
+{
+  Tensor<int, 4, RowMajor> celllist;
+  celllist = Tensor_1d_to_4d(celllist_py);
+  return build_cell_index_map(celllist, n_atoms);
+}
+
+
+ArrayXi find_neighbours_for_atom_py(const MatrixXd & positions, const ArrayXi & celllist_py,
+    int i_atom0, const MatrixXi & cell_index_map, double r_cut, const MatrixXd & box, const MatrixXd & box_inv)
+{
+  Tensor<int, 4, RowMajor> celllist;
+  celllist = Tensor_1d_to_4d(celllist_py);
+  return find_neighbours_for_atom(positions, celllist, i_atom0, cell_index_map, r_cut, box, box_inv);
+}
+
+
+MatrixXi find_neighbours_for_all_py(const MatrixXd & positions, const ArrayXi & celllist_py,
+    int n_atoms, double r_cut, const MatrixXd & box, const MatrixXd & box_inv)
+{
+  Tensor<int, 4, RowMajor> celllist;
+  celllist = Tensor_1d_to_4d(celllist_py);
+  return find_neighbours_for_all(positions, celllist, n_atoms, r_cut, box, box_inv);
+}  
+
 
 PYBIND11_MODULE(neighbour_list, m)
 {
   m.doc() = "Neighbour cell list module";
-  m.def("construct_cell_list_pywrap", &construct_cell_list_pywrap);
+  m.def("construct_cell_list", &construct_cell_list_py);
+  m.def("build_cell_index_map", &build_cell_index_map_py);
+  m.def("find_neighbours_for_atom", &find_neighbours_for_atom_py);
+  m.def("find_neighbours_for_all", &find_neighbours_for_all_py);
 }
