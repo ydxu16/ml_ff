@@ -8,15 +8,16 @@ int main(int argc, char *argv[])
   int dim[2];
 
   // dynamics matrix
-  Eigen::MatrixXd d, box, box_inv;
+  Eigen::MatrixXd d, box, box_o, box_inv;
   // Fixed size matrix
 
   d = Eigen::MatrixXd::Random(3, 10);
   cout << d << endl;
 
-  read_dmatrix2d_from_file(argv[1], dim, box);
+  read_dmatrix2d_from_file(argv[1], dim, box_o);
   // transpose into column-major layout
-  box = box.transpose();
+  box.resize(3, 3);
+  box = box_o.transpose();
   box_inv = box.inverse();
   
   cout << "------" << endl;
