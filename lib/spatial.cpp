@@ -37,7 +37,7 @@ VectorXd dr_vec_pbc(const VectorXd & r1, const VectorXd & r2, const MatrixXd & b
   VectorXd dr, ds;
   if (flag==0){
     dr = r2 - r1;
-    ds = dr.transpose() * box_inv;
+    ds = box_inv * dr;
   }
   else {
     ds = r2 - r1;
@@ -48,31 +48,18 @@ VectorXd dr_vec_pbc(const VectorXd & r1, const VectorXd & r2, const MatrixXd & b
   return (ds.transpose() * box);
 }
 
-double norm_vec(const VectorXd & r)
-{
-  double length = sqrt(r.dot(r));
-  return length;
-}
-
-VectorXd normalize_vec(const VectorXd & r)
-{
-  VectorXd r_normalized;
-  r_normalized = r / norm_vec(r);
-  return r_normalized;
-}
-
 // return distance between r1 & r2, under pbc
 double distance_pbc(const VectorXd & r1, const VectorXd & r2, const MatrixXd & box, const MatrixXd & box_inv, int flag)
 {
   VectorXd dr;
   dr = dr_vec_pbc(r1, r2, box, box_inv, flag);
-  return norm_vec(dr);
+  return dr.norm();
 }
 
 // return angle between r1 & r2, in radian
 double angle_vec(const VectorXd & r1, const VectorXd & r2)
 {
-  float cos_A = r1.dot(r2) / norm_vec(r1) / norm_vec(r2);
+  float cos_A = r1.dot(r2) / r1.norm() / r2.norm();
   return acos(cos_A);
 }
 

@@ -11,10 +11,12 @@ int main(int argc, char *argv[])
   Eigen::MatrixXd d, box, box_inv;
   // Fixed size matrix
 
-  d = Eigen::MatrixXd::Random(10, 3);
+  d = Eigen::MatrixXd::Random(3, 10);
   cout << d << endl;
 
   read_dmatrix2d_from_file(argv[1], dim, box);
+  // transpose into column-major layout
+  box = box.transpose();
   box_inv = box.inverse();
   
   cout << "------" << endl;
@@ -31,8 +33,8 @@ int main(int argc, char *argv[])
   s2 = Eigen::VectorXd::Random(3);
   for (int d=0; d<3; d++) s1(d) -= floor(s1(d));
   for (int d=0; d<3; d++) s2(d) -= floor(s2(d));
-  r1 = s1.transpose() * box;
-  r2 = s2.transpose() * box;
+  r1 = box * s1;
+  r2 = box * s2;
   cout << r1(0) << ", " << r1(1) << ", " << r1(2) << endl;
   cout << r2(0) << ", " << r2(1) << ", " << r2(2) << endl;
   cout << "-----" << endl;
@@ -44,10 +46,10 @@ int main(int argc, char *argv[])
   cout << "----------" << endl;
 
   // test angle & dihedral calc
-  r1 = d.row(0);
-  r2 = d.row(1);
-  r3 = d.row(2);
-  r4 = d.row(3);
+  r1 = d.col(0);
+  r2 = d.col(1);
+  r3 = d.col(2);
+  r4 = d.col(3);
   cout << angle_pbc(r1, r2, r3, box, box_inv, 0)/PI*180. << endl;
   cout << dihedral_pbc(r1, r2, r3, r4, box, box_inv, 0)/PI*180. << endl;
 }
