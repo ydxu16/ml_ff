@@ -20,6 +20,15 @@ using namespace std;
 using namespace Eigen;
 
 
+ArrayXi ind1d_to_ind3d(int n, int na, int nb, int nc);
+
+
+int ind3d_to_ind1d(int i, int j, int k, int na, int nb, int nc);
+
+
+bool is_neighbour_cell(ArrayXi ind0, ArrayXi ind1, int n1, int n2, int n3);
+
+
 Tensor<int, 4> construct_cell_list(const MatrixXd & positions, const ArrayXi & atom_labels,
     int n_atoms, const MatrixXd & box, const MatrixXd & box_inv, double r_cut);
 
@@ -28,7 +37,7 @@ MatrixXi build_cell_index_map(const Tensor<int, 4> & celllist, int n_atoms);
 
 
 ArrayXi find_neighbours(const MatrixXd & positions, const Tensor<int, 4> & celllist,
-    int i_atom, int i0, int j0, int k0, double r_cut, const MatrixXd & box, const MatrixXd & box_inv);
+    int i_atom, const VectorXi & ind0, double r_cut, const MatrixXd & box, const MatrixXd & box_inv);
 
 
 ArrayXi find_neighbours_for_atom(const MatrixXd & positions, const Tensor<int, 4> & celllist,

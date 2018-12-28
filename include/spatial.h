@@ -6,7 +6,10 @@ VectorXd dr_vec_pbc(const VectorXd & r1, const VectorXd & r2, const MatrixXd & b
 
 double distance_pbc(const VectorXd & r1, const VectorXd & r2, const MatrixXd & box, const MatrixXd & box_inv, int flag);
 
-double angle_vec(const VectorXd & r1, const VectorXd & r2);
+MatrixXd distance2_pbc_batch(const MatrixXd & pos1, const MatrixXd & pos2, 
+    const MatrixXd & box, const MatrixXd & box_inv, int flag);
+
+  double angle_vec(const VectorXd & r1, const VectorXd & r2);
 
 double angle_pbc(const VectorXd & r1, const VectorXd & r2, const VectorXd & r3, const MatrixXd & box, const MatrixXd & box_inv, int flag);
 

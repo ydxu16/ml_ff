@@ -4,14 +4,14 @@ CC=g++
 # USE MKL or eigen/omp
 #MKLROOT=/home/kuangy/opt/intel/mkl/
 #MKL_CFLAGS=-DMKL_ILP64 -m64 -I$(MKLROOT)/include
-#MKL_LDFLAGS=-L$(MKLROOT)/lib/intel64 -Wl,--no-as-needed -lmkl_intel_ilp64 -lmkl_gnu_thread -lmkl_core -lgomp -lpthread -lm -ldl
+#MKL_LDFLAGS=-L$(MKLROOT)/lib/intel64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_gnu_thread -lmkl_core -lgomp -lpthread -lm -ldl
 MKLROOT=
 MKL_CFLAGS=
 MKL_LDFLAGS=
 USEOMP= -fopenmp
 
 # user defined compile/link flags
-COPTS= -g -O3 -Wall -std=c++11 -I/home/kuangy/data2/data/project_fhc_ml/playground/cpp/include $(USEOMP)
+COPTS= -g -O3 -Wall -std=c++11 -mavx2 -I/home/kuangy/data2/data/project_fhc_ml/playground/cpp/include $(USEOMP)
 LDOPTS= -L/home/kuangy/data2/data/project_fhc_ml/playground/cpp/lib
 PY_INCLUDE= -I/usr/include/python3.6m -I/usr/local/include/python3.6 -I/home/kuangy/.local/include/python3.6m
 

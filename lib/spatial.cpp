@@ -56,6 +56,50 @@ double distance_pbc(const VectorXd & r1, const VectorXd & r2, const MatrixXd & b
   return dr.norm();
 }
 
+// compute the interatomic distances in batch
+// pos1 is a 3*na1 position matirx
+// pos2 is a 3*na2 position matrix
+// calculate the interatomic distances between these two
+// results is a na2*na1 distance^2 matrix
+// padding structure:
+// pos1_pad:
+// [r1_1, r1_1, ... r1_1  | r1_2, r1_2, ... r1_2  | ... | r1_n1, r1_n1, ... r1_n1]
+// pos2_pad:
+// [r2_1, r2_2, ... r2_n2 | r2_1, r2_2, ... r2_n2 | ... | r2_1,  r2_2, ...  r2_n2]
+MatrixXd distance2_pbc_batch(const MatrixXd & pos1, const MatrixXd & pos2, 
+    const MatrixXd & box, const MatrixXd & box_inv, int flag)
+{
+  int na1 = pos1.cols();
+  int na2 = pos2.cols();
+  MatrixXd pos1_pad, pos2_pad;
+  pos1_pad.resize(3, na1*na2);
+  pos2_pad.resize(3, na1*na2);
+  // pad pos1
+  for (int i=0; i<na1; i++) {
+    pos1_pad.block(0, i*na2, 3, na2) = pos1.col(i).replicate(1, na2);
+  }
+  // pad pos2
+  pos2_pad = pos2.replicate(1, na1);
+  MatrixXd dr_vecs, ds_vecs;
+  if (flag==0) {
+    dr_vecs = pos2_pad - pos1_pad;
+    ds_vecs = box_inv * dr_vecs;
+  }
+  else {
+    ds_vecs = pos2_pad - pos1_pad;
+  }
+  // pbc shifts
+  ds_vecs -= (ds_vecs.array()+0.5).floor().matrix();
+  dr_vecs = box * ds_vecs;
+  // find out distances
+  VectorXd distances2;
+  distances2 = dr_vecs.colwise().squaredNorm();
+  // cast results into matrix
+  Map<MatrixXd> results(distances2.data(), na2, na1);
+  
+  return results;
+}
+
 // return angle between r1 & r2, in radian
 double angle_vec(const VectorXd & r1, const VectorXd & r2)
 {

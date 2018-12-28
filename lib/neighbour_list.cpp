@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <iostream>
 #include <cmath>
+#include <vector>
 #include <mylibs.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/eigen.h>
@@ -25,8 +26,34 @@
 using namespace std;
 using namespace Eigen;
 
+// convert a three-dimensional indices to 1d-index
+ArrayXi ind1d_to_ind3d(int n, int na, int nb, int nc)
+{
+  ArrayXi ind(3);
+  ind(2) = n % nc;
+  ind(1) = (n / nc) % nb;
+  ind(0) = n / (nb*nc);
+  return ind;
+}
+
+int ind3d_to_ind1d(int i, int j, int k, int na, int nb, int nc)
+{
+  return k + j*nc + i*nb*nc;
+}
+
+// judge if two cells are adjacent or not
+bool is_neighbour_cell(ArrayXi ind0, ArrayXi ind1, int na, int nb, int nc)
+{
+  ArrayXi di = ind1 - ind0;
+  di = di.abs();
+  if (di(0) > 1 and di(0) < na-1) return false;
+  if (di(1) > 1 and di(1) < nb-1) return false;
+  if (di(2) > 1 and di(2) < nc-1) return false;
+  return true;
+}
+
 // this function returns a cell neighbour list
-// positions: n_atoms*3 array, storing the positions of the atoms you want to neighbour list
+// positions: 3*n_atoms array, storing the positions of the atoms you want to neighbour list
 //              Here, positions MUST BE dense.
 // atom_labels: n_atoms*1 array, just integers to label the atoms, usually just 0, 1, ... n_atoms-1
 //              but can be different if we are constructing a neighbour list for only part of the system
@@ -142,7 +169,7 @@ MatrixXi build_cell_index_map(const Tensor<int, 4> & celllist, int n_atoms)
 // cell_index_map must NOT be dense
 // i_atom must NOT be dense
 ArrayXi find_neighbours(const MatrixXd & positions, const Tensor<int, 4> & celllist,
-    int i_atom, int i0, int j0, int k0, double r_cut, const MatrixXd & box, const MatrixXd & box_inv)
+    int i_atom, const VectorXi & ind0, double r_cut, const MatrixXd & box, const MatrixXd & box_inv)
 {
   // original cell indices
   ArrayXi neighbours;
@@ -153,53 +180,96 @@ ArrayXi find_neighbours(const MatrixXd & positions, const Tensor<int, 4> & celll
   int n2 = celllist.dimension(2);
   int n3 = celllist.dimension(1);
   int nmax = celllist.dimension(0);
+  int ncell = n1*n2*n3;
   double r_cut2 = r_cut*r_cut;
   VectorXd r0 = positions.col(i_atom);
-  // loop over the 3*3*3=27 neighbouring cells
-  for (int di=-1; di<=1; di++) {
-    int i = i0 + di;
-    // pbc shifts
-    i = i % n1;
-    if (i < 0) i += n1;
-    for (int dj=-1; dj<=1; dj++) {
-      int j = j0 + dj;
-      j = j % n2;
-      if (j < 0) j += n2;
-      for (int dk=-1; dk<=1; dk++) {
-        int k = k0 + dk;
-        k = k % n3;
-        if (k < 0) k += n3;
-        for (int n=0; n<nmax; n++) {
-          // end of cell list
-          if (celllist(n, k, j, i) < 0) break;
-          int i_atom1 = celllist(n, k, j, i);
-          if (i_atom1 == i_atom) continue;
-          // if r_cut < 0, meaning we do not do distance judge
-          if (r_cut < 0) {
-            if (n_neighbour == MAX_N_NEIGHBOURS) {
-              cout << "ERROR: overflow in neighbour search, increase MAX_N_NEIGHBOURS" << endl;
-              throw exception();
-            }
-            neighbours(n_neighbour) = i_atom1;
-            n_neighbour += 1;
-          }
-          else {
-            VectorXd r1 = positions.col(i_atom1);
-            VectorXd dr = dr_vec_pbc(r0, r1, box, box_inv, 0);
-            if (abs(dr(0))>r_cut or abs(dr(1))>r_cut or abs(dr(2))>r_cut) continue;
-            if (dr.squaredNorm() < r_cut2) {
-              if (n_neighbour == MAX_N_NEIGHBOURS) {
-                cout << "ERROR: overflow in neighbour search, increase MAX_N_NEIGHBOURS" << endl;
-                throw exception();
-              }
-              neighbours(n_neighbour) = i_atom1;
-              n_neighbour += 1;
-            }
-          }
+  Map<MatrixXd> pos0(r0.data(), 3, 1);
+
+  for (int icell=0; icell<ncell; icell++) {
+    VectorXi ind1 = ind1d_to_ind3d(icell, n1, n2, n3);
+    if (not is_neighbour_cell(ind0, ind1, n1, n2, n3)) continue;
+    // find number of atoms in the cell1
+    int na_cell;
+    for (na_cell=0; na_cell<nmax; na_cell++) {
+      if (celllist(na_cell, ind1(2), ind1(1), ind1(0)) < 0) break;
+    }
+    MatrixXd d2;
+    if (r_cut>0) {
+      MatrixXd pos1;
+      pos1.resize(3, na_cell);
+      for (int iia=0; iia<na_cell; iia++) {
+        pos1.col(iia) = positions.col(celllist(iia, ind1(2), ind1(1), ind1(0)));
+      }
+      d2 = distance2_pbc_batch(pos0, pos1, box, box_inv, 0);
+    }
+    for (int iia=0; iia<na_cell; iia++) {
+      int i_atom1 = celllist(iia, ind1(2), ind1(1), ind1(0));
+      if (i_atom1 == i_atom) continue;
+      bool is_nb = false;
+      if (r_cut <= 0.0) {
+        is_nb = true;
+      }
+      else if (d2(iia, 0) < r_cut2) {
+        is_nb = true;
+      }
+      if (is_nb) {
+        if (n_neighbour == MAX_N_NEIGHBOURS) {
+          cout << "ERROR: overflow in neighbour search, increase MAX_N_NEIGHBOURS" << endl;
+          throw exception();
         }
+        neighbours(n_neighbour) = i_atom1;
+        n_neighbour += 1;
       }
     }
-  }
+  } 
+
+
+
+  // loop over the 3*3*3=27 neighbouring cells
+//  for (int di=-1; di<=1; di++) {
+//    int i = i0 + di;
+//    // pbc shifts
+//    i = i % n1;
+//    if (i < 0) i += n1;
+//    for (int dj=-1; dj<=1; dj++) {
+//      int j = j0 + dj;
+//      j = j % n2;
+//      if (j < 0) j += n2;
+//      for (int dk=-1; dk<=1; dk++) {
+//        int k = k0 + dk;
+//        k = k % n3;
+//        if (k < 0) k += n3;
+//        for (int n=0; n<nmax; n++) {
+//          // end of cell list
+//          if (celllist(n, k, j, i) < 0) break;
+//          int i_atom1 = celllist(n, k, j, i);
+//          if (i_atom1 == i_atom) continue;
+//          // if r_cut < 0, meaning we do not do distance judge
+//          if (r_cut < 0) {
+//            if (n_neighbour == MAX_N_NEIGHBOURS) {
+//              cout << "ERROR: overflow in neighbour search, increase MAX_N_NEIGHBOURS" << endl;
+//              throw exception();
+//            }
+//            neighbours(n_neighbour) = i_atom1;
+//            n_neighbour += 1;
+//          }
+//          else {
+//            VectorXd r1 = positions.col(i_atom1);
+//            VectorXd dr = dr_vec_pbc(r0, r1, box, box_inv, 0);
+//            if (abs(dr(0))>r_cut or abs(dr(1))>r_cut or abs(dr(2))>r_cut) continue;
+//            if (dr.squaredNorm() < r_cut2) {
+//              if (n_neighbour == MAX_N_NEIGHBOURS) {
+//                cout << "ERROR: overflow in neighbour search, increase MAX_N_NEIGHBOURS" << endl;
+//                throw exception();
+//              }
+//              neighbours(n_neighbour) = i_atom1;
+//              n_neighbour += 1;
+//            }
+//          }
+//        }
+//      }
+//    }
+//  }
   return neighbours;
 }
 
@@ -207,10 +277,8 @@ ArrayXi find_neighbours(const MatrixXd & positions, const Tensor<int, 4> & celll
 ArrayXi find_neighbours_for_atom(const MatrixXd & positions, const Tensor<int, 4> & celllist,
     int i_atom0, const MatrixXi & cell_index_map, double r_cut, const MatrixXd & box, const MatrixXd & box_inv)
 {
-  int i0 = cell_index_map(0, i_atom0);
-  int j0 = cell_index_map(1, i_atom0);
-  int k0 = cell_index_map(2, i_atom0);
-  return find_neighbours(positions, celllist, i_atom0, i0, j0, k0, r_cut, box, box_inv);
+  VectorXi ind0 = cell_index_map.col(i_atom0);
+  return find_neighbours(positions, celllist, i_atom0, ind0, r_cut, box, box_inv);
 }
 
 
@@ -228,72 +296,77 @@ MatrixXi find_neighbours_for_all(const MatrixXd & positions, const Tensor<int, 4
   int n1 = celllist.dimension(3);
   int n2 = celllist.dimension(2);
   int n3 = celllist.dimension(1);
+  int ncell = n1*n2*n3;
   int nmax = celllist.dimension(0);
   double r_cut2 = r_cut * r_cut;
-  for (int i0=0; i0<n1; i0++) {
-    for (int j0=0; j0<n2; j0++) {
-      for (int k0=0; k0<n3; k0++) {
-        for (int n0=0; n0<nmax; n0++) {
-          // finish looping over this cell
-          if (celllist(n0, k0, j0, i0) < 0) break;
-          int i_atom0 = celllist(n0, k0, j0, i0);
-          VectorXd r0 = positions.col(i_atom0);
-          // loop over the 3*3*3=27 neighbouring cells
-          for (int di=-1; di<=1; di++) {
-            int i = i0 + di;
-            i = i % n1;
-            if (i < 0) i += n1;
-            for (int dj=-1; dj<=1; dj++) {
-              int j = j0 + dj;
-              j = j % n2;
-              if (j < 0) j += n2;
-              for (int dk=-1; dk<=1; dk++) {
-                int k = k0 + dk;
-                k = k % n3;
-                if (k < 0) k += n3;
-                for (int n=0; n<nmax; n++) {
-                  if (celllist(n, k, j, i) < 0) break;
-                  int i_atom1 = celllist(n, k, j, i);
-                  if (i_atom1 <= i_atom0) continue;
-                  // do not judge distance, just put atom0, atom1 be neighbours
-                  if (r_cut < 0.0) { 
-                    if (n_nbs(i_atom0) == MAX_N_NEIGHBOURS or n_nbs(i_atom1) == MAX_N_NEIGHBOURS) {
-                      cout << "ERROR: overflow in neighbour search, increase MAX_N_NEIGHBOURS" << endl;
-                      throw exception();
-                    }
-                    // add neighbour to atom0
-                    nb_list(n_nbs(i_atom0), i_atom0) = i_atom1;
-                    n_nbs(i_atom0) += 1;
-                    // add neighbour to atom1
-                    nb_list(n_nbs(i_atom1), i_atom1) = i_atom0;
-                    n_nbs(i_atom1) += 1;
-                  }
-                  else {
-                    VectorXd r1 = positions.col(i_atom1);
-                    VectorXd dr = dr_vec_pbc(r0, r1, box, box_inv, 0);
-                    // pre-screening
-                    if (abs(dr(0))>r_cut or abs(dr(1))>r_cut or abs(dr(2))>r_cut) continue;
-                    if (dr.squaredNorm() < r_cut2) {
-                      if (n_nbs(i_atom0) == MAX_N_NEIGHBOURS or n_nbs(i_atom1) == MAX_N_NEIGHBOURS) {
-                        cout << "ERROR: overflow in neighbour search, increase MAX_N_NEIGHBOURS" << endl;
-                        throw exception();
-                      }
-                      // add neighbour to atom0
-                      nb_list(n_nbs(i_atom0), i_atom0) = i_atom1;
-                      n_nbs(i_atom0) += 1;
-                      // add neighbour to atom1
-                      nb_list(n_nbs(i_atom1), i_atom1) = i_atom0;
-                      n_nbs(i_atom1) += 1;
-                    }
-                  }
-                }
-              }
+  
+  // construct the new position matrix, which is contiguous within each cell
+  // the new position matrix is in direct coordinates
+  vector<MatrixXd> spos_c;
+  for (int icell=0; icell<ncell; icell++) {
+    VectorXi ind = ind1d_to_ind3d(icell, n1, n2, n3);
+    int na_cell;
+    // count number of atoms in each cell, for memory allocation
+    for (na_cell=0; na_cell<nmax; na_cell++) {
+      if (celllist(na_cell, ind(2), ind(1), ind(0)) < 0) break;
+    }
+    // make the contiguous position matrix in this cell
+    MatrixXd spos_cell;
+    spos_cell.resize(3, na_cell);
+    for (int n=0; n<na_cell; n++) {
+      spos_cell.col(n) = box_inv * positions.col(celllist(n, ind(2), ind(1), ind(0)));
+    }
+    spos_c.push_back(spos_cell);
+  }
+
+  // loop over all cell pairs
+  for (int icell0=0; icell0<ncell; icell0++) {
+    ArrayXi ind0 = ind1d_to_ind3d(icell0, n1, n2, n3);
+    for (int icell1=icell0; icell1<ncell; icell1++) {
+      ArrayXi ind1 = ind1d_to_ind3d(icell1, n1, n2, n3);
+      // two cells are not adjacent
+      if (not is_neighbour_cell(ind0, ind1, n1, n2, n3)) continue;
+      int na0 = spos_c[icell0].cols();
+      int na1 = spos_c[icell1].cols();
+      // need to judge distance
+      MatrixXd d2;
+      if (r_cut > 0.0) {
+        d2 = distance2_pbc_batch(spos_c[icell0], spos_c[icell1], box, box_inv, 1);
+      }
+      for (int iia0=0; iia0<na0; iia0++) {
+        int i_atom0 = celllist(iia0, ind0(2), ind0(1), ind0(0));
+        for (int iia1=0; iia1<na1; iia1++) {
+          int i_atom1 = celllist(iia1, ind1(2), ind1(1), ind1(0));
+          bool is_nb = false;
+          // if it is the same cell, then cut the interacting pair by half
+          if (icell0 == icell1 and i_atom0 <= i_atom1) {
+            is_nb = false;
+          }
+          // do not judge distance
+          else if (r_cut <= 0.0) {
+            is_nb = true;
+          }
+          // distance within r_cut
+          else if (d2(iia1, iia0) < r_cut2) {
+            is_nb = true;
+          }
+          if (is_nb) {
+            if (n_nbs(i_atom0) == MAX_N_NEIGHBOURS or n_nbs(i_atom1) == MAX_N_NEIGHBOURS) {
+              cout << "ERROR: overflow in neighbour search, increase MAX_N_NEIGHBOURS" << endl;
+              throw exception();
             }
+            // add neighbour to atom0
+            nb_list(n_nbs(i_atom0), i_atom0) = i_atom1;
+            n_nbs(i_atom0) += 1;
+            // add neighbour to atom1
+            nb_list(n_nbs(i_atom1), i_atom1) = i_atom0;
+            n_nbs(i_atom1) += 1;
           }
         }
       }
     }
   }
+
   return nb_list;
 }
 
