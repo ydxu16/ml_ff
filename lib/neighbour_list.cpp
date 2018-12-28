@@ -232,7 +232,7 @@ MatrixXi find_neighbours_for_all(const MatrixXd & positions, const Tensor<int, 4
   double r_cut2 = r_cut * r_cut;
   for (int i0=0; i0<n1; i0++) {
     for (int j0=0; j0<n2; j0++) {
-      for (int k0=0; k0<n2; k0++) {
+      for (int k0=0; k0<n3; k0++) {
         for (int n0=0; n0<nmax; n0++) {
           // finish looping over this cell
           if (celllist(i0, j0, k0, n0) < 0) break;
