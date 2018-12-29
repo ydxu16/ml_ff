@@ -79,7 +79,11 @@ MatrixXd distance2_pbc_batch(const MatrixXd & pos1, const MatrixXd & pos2,
     pos1_pad.block(0, i*na2, 3, na2) = pos1.col(i).replicate(1, na2);
   }
   // pad pos2
-  pos2_pad = pos2.replicate(1, na1);
+  for (int i=0; i<na1; i++) {
+    pos2_pad.block(0, i*na2, 3, na2) = pos2;
+  }
+  // the eigen native replicate function: really slow, why???
+  //pos2_pad = pos2.replicate(1, na1);
   MatrixXd dr_vecs, ds_vecs;
   if (flag==0) {
     dr_vecs = pos2_pad - pos1_pad;
@@ -96,6 +100,10 @@ MatrixXd distance2_pbc_batch(const MatrixXd & pos1, const MatrixXd & pos2,
   distances2 = dr_vecs.colwise().squaredNorm();
   // cast results into matrix
   Map<MatrixXd> results(distances2.data(), na2, na1);
+
+  // bypass the main body of the function
+//  MatrixXd results2(na2, na1);
+//  results2.setConstant(100.0);
   
   return results;
 }

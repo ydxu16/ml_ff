@@ -5,7 +5,7 @@ import numpy as np
 import spatial
 import neighbour_list
 
-np.random.seed(100)
+#np.random.seed(100)
 
 r1 = np.zeros(3)
 r2 = np.ones(3)

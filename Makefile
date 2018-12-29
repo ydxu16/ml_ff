@@ -20,10 +20,16 @@ LDFLAGS=$(LDOPTS) $(MKL_LDFLAGS)
 
 # user defined libs
 LIBS= lib/libmylib.so
-OBJS= lib/file_io.o lib/spatial.o lib/neighbour_list.o
+OBJS= lib/file_io.o \
+	  lib/spatial.o \
+	  lib/neighbour_list.o
 PYBDERS = spatial.so neighbour_list.so
 LIBLINKS= -lmylib -lpython3.6m
-HEADERS= include/mylibs.h include/spatial.h include/file_io.h include/constants.h include/neighbour_list.h
+HEADERS= include/mylibs.h \
+		 include/constants.h \
+		 include/spatial.h \
+		 include/file_io.h \
+		 include/neighbour_list.h
 TARGET = main
 
 default: all
@@ -35,17 +41,17 @@ python: $(PYBDERS)
 $(TARGET): test.cpp $(LIBS) $(HEADERS) $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $(TARGET) test.cpp $(LIBLINKS)
 
-lib/file_io.o: lib/file_io.cpp include/mylibs.h
+lib/file_io.o: lib/file_io.cpp include/file_io.h
 	$(CC) -fPIC lib/file_io.cpp -c -o lib/file_io.o $(CFLAGS) $(LDFLAGS)
 
-lib/spatial.o: lib/spatial.cpp include/mylibs.h
+lib/spatial.o: lib/spatial.cpp include/spatial.h
 	$(CC) -fPIC lib/spatial.cpp -c -o lib/spatial.o $(CFLAGS) $(LDFLAGS)
 
 lib/neighbour_list.o: lib/neighbour_list.cpp include/neighbour_list.h
 	$(CC) -fPIC lib/neighbour_list.cpp -c -o lib/neighbour_list.o $(CFLAGS) $(LDFLAGS)
 
-lib/libmylib.so: lib/file_io.o lib/spatial.o
-	$(CC) -fPIC lib/file_io.o lib/spatial.o -shared -o lib/libmylib.so $(CFLAGS) $(LDFLAGS)
+lib/libmylib.so: $(OBJS)
+	$(CC) -fPIC $(OBJS) -shared -o lib/libmylib.so $(CFLAGS) $(LDFLAGS)
 
 clean: 
 	$(RM) lib/*so *so lib/*o main

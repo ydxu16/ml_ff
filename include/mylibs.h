@@ -10,6 +10,7 @@
 #include "constants.h"
 #include "file_io.h"
 #include "spatial.h"
+#include "neighbour_list.h"
 
 using namespace std;
 

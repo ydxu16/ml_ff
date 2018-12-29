@@ -56,11 +56,11 @@ Tensor<int, 4> Tensor_1d_to_4d(const ArrayXi & A_1d);
 ArrayXi construct_cell_list_py(const MatrixXd & positions, const ArrayXi & atom_labels,                                                                                  
     int n_atoms, const MatrixXd & box, const MatrixXd & box_inv, double r_cut);
 
-MatrixXi build_cell_index_map_py(const ArrayXi * celllist_py, int n_atoms);
+MatrixXi build_cell_index_map_py(const ArrayXi & celllist_py, int n_atoms);
 
 ArrayXi find_neighbours_for_atom_py(const MatrixXd & positions, const ArrayXi & celllist_py,
     int i_atom0, const MatrixXi & cell_index_map, double r_cut, const MatrixXd & box, const MatrixXd & box_inv);
 
 MatrixXi find_neighbours_for_all_py(const MatrixXd & positions, const ArrayXi & celllist_py,
     int n_atoms, double r_cut, const MatrixXd & box, const MatrixXd & box_inv);
-
+//
