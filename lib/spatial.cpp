@@ -45,7 +45,7 @@ VectorXd dr_vec_pbc(const VectorXd & r1, const VectorXd & r2, const MatrixXd & b
   // pbc shift
   ds -= (ds.array()+0.5).floor().matrix();
   //for (int dd=0; dd<3; dd++) ds(dd) -= floor(ds(dd));
-  return (ds.transpose() * box);
+  return (box * ds);
 }
 
 // return distance between r1 & r2, under pbc

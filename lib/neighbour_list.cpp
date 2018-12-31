@@ -55,13 +55,13 @@ bool is_neighbour_cell(ArrayXi ind0, ArrayXi ind1, int na, int nb, int nc)
 
 // this function returns a cell neighbour list
 // positions: 3*n_atoms array, storing the positions of the atoms you want to neighbour list
-//              Here, positions MUST BE dense.
+//              Here, positions MUST BE compact.
 // atom_labels: n_atoms*1 array, just integers to label the atoms, usually just 0, 1, ... n_atoms-1
 //              but can be different if we are constructing a neighbour list for only part of the system
 //              for example, if we only want to neighbour list the real atoms, but not the v-sites, then
 //              the v-site indices should be missing from atom_labels
-//              that is, atom_labels must NOT be dense.
-// n_atoms: integer, must be dense
+//              that is, atom_labels must NOT be compact.
+// n_atoms: integer, must be compact
 // box, box_inv: box dimensions and its inversion
 // r_cut: realspace cutoff distance, in Angstrom
 Tensor<int, 4> construct_cell_list(const MatrixXd & positions, const ArrayXi & atom_labels,
@@ -138,8 +138,8 @@ Tensor<int, 4> construct_cell_list(const MatrixXd & positions, const ArrayXi & a
 // not want to neighbour list.
 // Hence, the returned cell_index_map will contain -1 for virtual sites, indicating that 
 // they are not assigned to a particular cell.
-// n_atoms: integer, must be not dense
-// return values not dense
+// n_atoms: integer, must be not compact
+// return values not compact 
 MatrixXi build_cell_index_map(const Tensor<int, 4> & celllist, int n_atoms) 
 {
   MatrixXi cell_index_map;
@@ -165,9 +165,9 @@ MatrixXi build_cell_index_map(const Tensor<int, 4> & celllist, int n_atoms)
   return cell_index_map;
 }
 
-// Here, positions must NOT be dense
-// cell_index_map must NOT be dense
-// i_atom must NOT be dense
+// Here, positions must NOT be compact
+// cell_index_map must NOT be compact
+// i_atom must NOT be compact
 ArrayXi find_neighbours(const MatrixXd & positions, const Tensor<int, 4> & celllist,
     int i_atom, const VectorXi & ind0, double r_cut, const MatrixXd & box, const MatrixXd & box_inv)
 {
@@ -235,14 +235,19 @@ ArrayXi find_neighbours_for_atom(const MatrixXd & positions, const Tensor<int, 4
 }
 
 
-// Positions here are not dense
-// n_atoms here is not dense
+// Positions here are not compact
+// n_atoms here is not compact
+// distances2 is the squared distances between neighbours, it is an in-out argument
 MatrixXi find_neighbours_for_all(const MatrixXd & positions, const Tensor<int, 4> & celllist,
-    int n_atoms, double r_cut, const MatrixXd & box, const MatrixXd & box_inv)
+    int n_atoms, double r_cut, const MatrixXd & box, const MatrixXd & box_inv, 
+    Ref<MatrixXd> distances2)
 {
-  MatrixXi nb_list;
+  MatrixXi nb_list, nb_list_tmp;
   nb_list.resize(MAX_N_NEIGHBOURS, n_atoms);
   nb_list.setConstant(-1);
+  nb_list_tmp.resize(MAX_N_NEIGHBOURS, n_atoms);
+  nb_list_tmp.setConstant(-1);
+  distances2.setConstant(0.0);
   ArrayXi n_nbs;
   n_nbs.resize(n_atoms);
   n_nbs.setConstant(0);
@@ -273,7 +278,8 @@ MatrixXi find_neighbours_for_all(const MatrixXd & positions, const Tensor<int, 4
   }
 
   // loop over all cell pairs
-#pragma omp parallel for
+#pragma omp parallel
+#pragma omp for nowait
   for (int icell0=0; icell0<ncell; icell0++) {
     ArrayXi ind0 = ind1d_to_ind3d(icell0, n1, n2, n3);
     int na0 = spos_c[icell0].cols();
@@ -313,14 +319,29 @@ MatrixXi find_neighbours_for_all(const MatrixXd & positions, const Tensor<int, 4
               throw exception();
             }
             // add neighbour to atom0
-            nb_list(n_nbs(i_atom0), i_atom0) = i_atom1;
+            nb_list_tmp(n_nbs(i_atom0), i_atom0) = i_atom1;
+            distances2(n_nbs(i_atom0), i_atom0) = d2(iia1, iia0);
             n_nbs(i_atom0) += 1;
-            // add neighbour to atom1
-            nb_list(n_nbs(i_atom1), i_atom1) = i_atom0;
-            n_nbs(i_atom1) += 1;
+            // add neighbour to atom1, deal separately in below, due to the writing conflicts in OMP
+            // need omp locks here
+            //nb_list(n_nbs(i_atom1), i_atom1) = i_atom0;
+            //distances2(n_nbs(i_atom1), i_atom1) = d2(iia1, iia0);
+            //n_nbs(i_atom1) += 1;
           }
         }
       }
+    }
+  }
+
+  // add neighbour to atom1
+  nb_list = nb_list_tmp;
+  for (int i_atom0=0; i_atom0<n_atoms; i_atom0++) {
+    for (int iia1=0; iia1<MAX_N_NEIGHBOURS; iia1++) {
+      int i_atom1 = nb_list_tmp(iia1, i_atom0);
+      if (i_atom1 < 0) break;
+      nb_list(n_nbs(i_atom1), i_atom1) = i_atom0;
+      distances2(n_nbs(i_atom1), i_atom1) = distances2(iia1, i_atom0);
+      n_nbs(i_atom1) += 1;
     }
   }
 
@@ -389,11 +410,12 @@ ArrayXi find_neighbours_for_atom_py(const MatrixXd & positions, const ArrayXi & 
 
 
 MatrixXi find_neighbours_for_all_py(const MatrixXd & positions, const ArrayXi & celllist_py,
-    int n_atoms, double r_cut, const MatrixXd & box, const MatrixXd & box_inv)
+    int n_atoms, double r_cut, const MatrixXd & box, const MatrixXd & box_inv,
+    Ref<MatrixXd> distances2)
 {
   Tensor<int, 4> celllist;
   celllist = Tensor_1d_to_4d(celllist_py);
-  return find_neighbours_for_all(positions, celllist, n_atoms, r_cut, box, box_inv);
+  return find_neighbours_for_all(positions, celllist, n_atoms, r_cut, box, box_inv, distances2);
 }  
 
 

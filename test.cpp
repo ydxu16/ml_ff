@@ -70,12 +70,17 @@ int main(int argc, char *argv[])
   double r_cut = 4.0;
   ArrayXi atom_labels = ArrayXi::LinSpaced(n_atoms, 0, n_atoms-1);
   MatrixXd positions;
+  MatrixXd distances2;
   positions = MatrixXd::Random(3, n_atoms);
+  // pairwise squared distances matrix
+  distances2.resize(MAX_N_NEIGHBOURS, n_atoms);
   //positions = (positions.array()+1.0)/2;
   positions = box * positions;
   Tensor<int, 4> cell_list = construct_cell_list(positions, atom_labels, n_atoms, box, box_inv, r_cut);
   MatrixXi nbs;
-  for (int i=0; i<1000; i++){
-    nbs = find_neighbours_for_all(positions, cell_list, n_atoms, r_cut, box, box_inv);
+  for (int i=0; i<1000; i++) {
+    nbs = find_neighbours_for_all(positions, cell_list, n_atoms, r_cut, box, box_inv, distances2);
   }
+  cout << nbs.col(10).transpose() << endl;
+  cout << distances2.col(10).transpose() << endl;
 }

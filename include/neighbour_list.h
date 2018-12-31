@@ -45,7 +45,8 @@ ArrayXi find_neighbours_for_atom(const MatrixXd & positions, const Tensor<int, 4
 
 
 MatrixXi find_neighbours_for_all(const MatrixXd & positions, const Tensor<int, 4> & celllist,
-    int n_atoms, double r_cut, const MatrixXd & box, const MatrixXd & box_inv);
+    int n_atoms, double r_cut, const MatrixXd & box, const MatrixXd & box_inv,
+    Ref<MatrixXd> distances2);
 
 
 /* python wrapper beaucracy  */
@@ -62,5 +63,6 @@ ArrayXi find_neighbours_for_atom_py(const MatrixXd & positions, const ArrayXi & 
     int i_atom0, const MatrixXi & cell_index_map, double r_cut, const MatrixXd & box, const MatrixXd & box_inv);
 
 MatrixXi find_neighbours_for_all_py(const MatrixXd & positions, const ArrayXi & celllist_py,
-    int n_atoms, double r_cut, const MatrixXd & box, const MatrixXd & box_inv);
+    int n_atoms, double r_cut, const MatrixXd & box, const MatrixXd & box_inv,
+    Ref<MatrixXd> distances2);
 //
